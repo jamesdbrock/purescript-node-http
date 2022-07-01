@@ -12,7 +12,8 @@ to generate this file without the comments in this block.
 -}
 { name = "node-http"
 , dependencies =
-  [ "arraybuffer-types"
+  [ "aff"
+  , "arraybuffer-types"
   , "console"
   , "contravariant"
   , "effect"
