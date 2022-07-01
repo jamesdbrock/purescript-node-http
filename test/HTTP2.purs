@@ -6,12 +6,17 @@ import Control.Monad.ST.Class (liftST)
 import Control.Monad.ST.Ref as ST.Ref
 import Data.Foldable (for_)
 import Data.Maybe (fromMaybe, maybe)
+import Data.Tuple (Tuple(..))
 import Effect (Effect)
+import Effect.Aff (Aff, runAff_)
+import Effect.Class (liftEffect)
 import Effect.Console as Console
 import Node.Encoding as Node.Encoding
-import Node.HTTP2 (headerKeys, headerValueString, toHeaders, toOptions)
+import Node.HTTP2 (headerKeys, headerString, toHeaders, toOptions)
 import Node.HTTP2.Client as HTTP2.Client
+import Node.HTTP2.Client.Aff (close, connect, request) as HTTP2.Client.Aff
 import Node.HTTP2.Server as HTTP2.Server
+import Node.HTTP2.Server.Aff as HTTP2.Server.Aff
 import Node.Stream as Node.Stream
 import Node.URL as URL
 import Unsafe.Coerce (unsafeCoerce)
@@ -55,8 +60,7 @@ testHttp2Client = do
   clientsession <- HTTP2.Client.connect
     (URL.parse "https://localhost:8443")
     (toOptions {ca: mockCert})
-    (\_ -> pure unit)
-    logError
+    (\_ _ -> pure unit)
 
   clientstream <- HTTP2.Client.request clientsession
     (toHeaders {":path": "/"})
@@ -66,7 +70,7 @@ testHttp2Client = do
     \headers _ ->
       for_ (headerKeys headers) \name ->
         Console.log $
-          name <> ": " <> fromMaybe "" (headerValueString headers name)
+          name <> ": " <> fromMaybe "" (headerString headers name)
 
   let req = HTTP2.Client.toDuplex clientstream
 
@@ -78,8 +82,60 @@ testHttp2Client = do
     Console.log $ "\n" <> dataString
     HTTP2.Client.close clientsession (pure unit)
 
+testHttp2ServerSecureAff :: Aff Unit
+testHttp2ServerSecureAff = do
+
+  void $ HTTP2.Server.Aff.listenSecure
+    (toOptions {key: mockKey, cert: mockCert})
+    (toOptions {port: 8444})
+    \server _ stream -> do
+      HTTP2.Server.Aff.respond stream
+        (toHeaders
+          { "content-type": "text/html; charset=utf-8"
+          , ":status": 200
+          }
+        )
+      -- There are no separate test dependencies so we can't add
+      -- Node.Stream.Aff dependency so we can't do Aff write.
+      liftEffect $ void $ Node.Stream.writeString (HTTP2.Server.toDuplex stream)
+        Node.Encoding.UTF8
+        "HTTP/2 Secure Body Aff"
+        \err -> do
+          maybe (pure unit) logError err
+          Node.Stream.end (HTTP2.Server.toDuplex stream)
+            \err2 -> do
+              maybe (pure unit) logError err2
+      HTTP2.Server.Aff.closeServerSecure server
+
   where
     logError err = Console.log (unsafeCoerce err)
+
+
+testHttp2ClientAff :: Aff Unit
+testHttp2ClientAff = do
+
+  clientsession <- HTTP2.Client.Aff.connect
+    (toOptions {ca: mockCert})
+    (URL.parse "https://localhost:8444")
+
+  Tuple headers clientstream <- HTTP2.Client.Aff.request clientsession
+    (toOptions {})
+    (toHeaders {":path": "/"})
+
+  liftEffect $ for_ (headerKeys headers) \name ->
+    Console.log $ name <> ": " <> fromMaybe "" (headerString headers name)
+
+  let req = HTTP2.Client.toDuplex clientstream
+
+  -- There are no separate test dependencies so we can't add
+  -- Node.Stream.Aff dependency so we can't do Aff readAll.
+  dataRef <- liftEffect $ liftST $ ST.Ref.new ""
+  liftEffect $ Node.Stream.onDataString req Node.Encoding.UTF8
+    \chunk -> void $ liftST $ ST.Ref.modify (_ <> chunk) dataRef
+  liftEffect $ Node.Stream.onEnd req do
+    dataString <- liftST $ ST.Ref.read dataRef
+    Console.log $ "\n" <> dataString
+    runAff_ (\_ -> pure unit) $ HTTP2.Client.Aff.close clientsession
 
 
 -- https://letsencrypt.org/docs/certificates-for-localhost/#making-and-trusting-your-own-certificates

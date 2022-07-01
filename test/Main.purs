@@ -7,6 +7,7 @@ import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Options (Options, options, (:=))
 import Data.Tuple (Tuple(..))
 import Effect (Effect)
+import Effect.Aff (launchAff_)
 import Effect.Console (log, logShow)
 import Foreign.Object (fromFoldable, lookup)
 import Node.Encoding (Encoding(..))
@@ -16,7 +17,7 @@ import Node.HTTP.Secure as HTTPS
 import Node.Net.Socket as Socket
 import Node.Stream (Writable, end, pipe, writeString)
 import Partial.Unsafe (unsafeCrashWith)
-import Test.HTTP2 (testHttp2Client, testHttp2ServerSecure)
+import Test.HTTP2 (testHttp2Client, testHttp2ClientAff, testHttp2ServerSecure, testHttp2ServerSecureAff)
 import Unsafe.Coerce (unsafeCoerce)
 
 foreign import stdout :: forall r. Writable r
@@ -30,6 +31,9 @@ main = do
   testCookies
   testHttp2ServerSecure
   testHttp2Client
+  launchAff_ do
+    testHttp2ServerSecureAff
+    testHttp2ClientAff
 
 respond :: Request -> Response -> Effect Unit
 respond req res = do

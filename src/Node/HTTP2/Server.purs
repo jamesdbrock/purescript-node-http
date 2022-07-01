@@ -32,12 +32,14 @@ module Node.HTTP2.Server
   , createServer
   , listen
   , onceSession
+  , onStream
   , onceStream
   , closeServer
   , Http2SecureServer
   , createSecureServer
   , listenSecure
   , onceSessionSecure
+  , onStreamSecure
   , onceStreamSecure
   , closeServerSecure
   , ServerHttp2Session
@@ -58,6 +60,8 @@ import Node.HTTP2.Internal as Internal
 import Node.Stream (Duplex)
 import Unsafe.Coerce (unsafeCoerce)
 
+-- | An HTTP/2 server with one listening socket for unencrypted connections.
+-- |
 -- | https://nodejs.org/docs/latest/api/http2.html#class-http2server
 foreign import data Http2Server :: Type
 
@@ -75,6 +79,8 @@ closeServer :: Http2Server -> Effect Unit -> Effect Unit
 closeServer = unsafeCoerce Internal.close
 
 
+-- | An HTTP/2 server with one listening socket for encrypted connections.
+-- |
 -- | https://nodejs.org/docs/latest/api/http2.html#class-http2secureserver
 foreign import data Http2SecureServer :: Type
 
@@ -121,6 +127,10 @@ closeSession = unsafeCoerce Internal.close
 onceStream :: Http2Server -> (ServerHttp2Stream -> Headers -> Flags -> Effect Unit) -> Effect (Effect Unit)
 onceStream = unsafeCoerce Internal.onceStream
 
+-- | https://nodejs.org/docs/latest/api/http2.html#event-stream
+onStream :: Http2Server -> (ServerHttp2Stream -> Headers -> Flags -> Effect Unit) -> Effect Unit
+onStream = unsafeCoerce Internal.onStream
+
 -- | Listen for one event, call the callback, then remove
 -- | the event listener.
 -- | Returns an effect for removing the event listener before the event
@@ -129,6 +139,10 @@ onceStream = unsafeCoerce Internal.onceStream
 -- | https://nodejs.org/docs/latest/api/http2.html#event-stream
 onceStreamSecure :: Http2SecureServer -> (ServerHttp2Stream -> Headers -> Flags -> Effect Unit) -> Effect (Effect Unit)
 onceStreamSecure = unsafeCoerce Internal.onceStream
+
+-- | https://nodejs.org/docs/latest/api/http2.html#event-stream
+onStreamSecure :: Http2SecureServer -> (ServerHttp2Stream -> Headers -> Flags -> Effect Unit) -> Effect Unit
+onStreamSecure = unsafeCoerce Internal.onStream
 
 -- | https://nodejs.org/docs/latest/api/http2.html#http2streamrespondheaders-options
 respond :: ServerHttp2Stream -> Headers -> OptionsObject -> Effect Unit

@@ -18,25 +18,31 @@ export const close = foreign => callback => () => {
 
 // https://nodejs.org/docs/latest/api/http2.html#event-close_1
 export const onceClose = http2stream => callback => () => {
-  http2stream.once('close',
-    () => callback(http2stream.rstCode)()
-  );
+  const cb = () => callback(http2stream.rstCode)();
+  http2stream.once('close', cb);
+  return () => {http2stream.removeEventListener('close', cb)};
 }
 
 // https://nodejs.org/docs/latest/api/http2.html#event-stream
 export const onceStream = foreign => callback => () => {
-	const cb = (stream, headers, flags) => callback(stream)(headers)(flags)();
+  const cb = (stream, headers, flags) => callback(stream)(headers)(flags)();
   foreign.once('stream', cb);
-	return () => {foreign.removeEventListener('stream', cb)};
+  return () => {foreign.removeEventListener('stream', cb)};
+}
+
+// https://nodejs.org/docs/latest/api/http2.html#event-stream
+export const onStream = foreign => callback => () => {
+  const cb = (stream, headers, flags) => callback(stream)(headers)(flags)();
+  foreign.on('stream', cb);
 }
 
 export const onceError = object => callback => () => {
-	const cb = error => callback(error)();
+  const cb = error => callback(error)();
   object.once('error', cb);
-	return () => {object.removeEventListener('error', cb)};
+  return () => {object.removeEventListener('error', cb)};
 }
 
 export const throwAllErrors = eventtarget => () => {
-	eventtarget.addEventListener('error', error => {throw error});
+  eventtarget.addEventListener('error', error => {throw error});
 }
 

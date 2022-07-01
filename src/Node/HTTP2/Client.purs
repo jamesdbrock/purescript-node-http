@@ -11,8 +11,7 @@
 -- | clientsession <- connect
 -- |   (URL.parse "https://localhost:8443")
 -- |   (toOptions {ca})
--- |   (\socket -> pure unit)
--- |   (\err -> Effect.Console.error err)
+-- |   (\_ _ -> pure unit)
 -- |
 -- | clientstream <- request clientsession
 -- |   (toHeaders {":path": "/"})
@@ -46,6 +45,7 @@ module Node.HTTP2.Client
   , respond
   , oncePush
   , toDuplex
+  , destroy
   )
   where
 
@@ -67,7 +67,7 @@ import Unsafe.Coerce (unsafeCoerce)
 foreign import data ClientHttp2Session :: Type
 
 -- | https://nodejs.org/docs/latest/api/http2.html#http2connectauthority-options-listener
-foreign import connect :: URL -> OptionsObject -> (Socket -> Effect Unit) -> (Error -> Effect Unit) -> Effect ClientHttp2Session
+foreign import connect :: URL -> OptionsObject -> (ClientHttp2Session -> Socket -> Effect Unit) -> Effect ClientHttp2Session
 
 -- | https://nodejs.org/docs/latest/api/http2.html#class-clienthttp2stream
 foreign import data ClientHttp2Stream :: Type
@@ -75,12 +75,18 @@ foreign import data ClientHttp2Stream :: Type
 -- | https://nodejs.org/docs/latest/api/http2.html#clienthttp2sessionrequestheaders-options
 foreign import request :: ClientHttp2Session -> Headers -> OptionsObject -> Effect ClientHttp2Stream
 
+-- | https://nodejs.org/docs/latest/api/http2.html#destruction
+foreign import destroy :: ClientHttp2Stream -> Effect Unit
+
 -- | https://nodejs.org/docs/latest/api/http2.html#http2sessionclosecallback
 close :: ClientHttp2Session -> Effect Unit -> Effect Unit
 close = unsafeCoerce Internal.close
 
 -- | https://nodejs.org/docs/latest/api/http2.html#event-response
 foreign import onceResponse :: ClientHttp2Stream -> (Headers -> Flags -> Effect Unit) -> Effect Unit
+
+-- | https://nodejs.org/docs/latest/api/http2.html#event-headers
+foreign import onceHeaders :: ClientHttp2Session -> (Headers -> Flags -> Effect Unit) -> Effect (Effect Unit)
 
 -- | https://nodejs.org/docs/latest/api/http2.html#event-stream
 -- |
@@ -95,7 +101,7 @@ onceError = unsafeCoerce Internal.onceError
 -- | https://nodejs.org/docs/latest/api/http2.html#event-push
 -- |
 -- | https://nodejs.org/docs/latest/api/http2.html#push-streams-on-the-client
-foreign import oncePush :: ClientHttp2Stream -> (Headers -> Flags -> Effect Unit) -> Effect Unit
+foreign import oncePush :: ClientHttp2Stream -> (Headers -> Flags -> Effect Unit) -> Effect (Effect Unit)
 
 -- | https://nodejs.org/docs/latest/api/http2.html#http2streamrespondheaders-options
 respond :: ClientHttp2Stream -> Headers -> OptionsObject -> Effect Unit

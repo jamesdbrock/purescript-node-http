@@ -29,6 +29,9 @@ foreign import data Http2Session :: Type
 -- | https://nodejs.org/docs/latest/api/http2.html#event-stream
 foreign import onceStream :: Foreign -> (Http2Stream -> Headers -> Flags -> Effect Unit) -> Effect (Effect Unit)
 
+-- | https://nodejs.org/docs/latest/api/http2.html#event-stream
+foreign import onStream :: Foreign -> (Http2Stream -> Headers -> Flags -> Effect Unit) -> Effect Unit
+
 -- | Listen for one event, call the callback, then remove
 -- | the event listener.
 -- | Returns an effect for removing the event listener before the event
@@ -57,7 +60,7 @@ foreign import throwAllErrors :: Foreign -> Effect Unit
 foreign import data Http2Stream :: Type
 
 -- | https://nodejs.org/docs/latest/api/http2.html#event-close_1
-foreign import onceClose :: Http2Stream -> (NGHTTP2 -> Effect Unit) -> Effect Unit
+foreign import onceClose :: Http2Stream -> (NGHTTP2 -> Effect Unit) -> Effect (Effect Unit)
 
 -- | https://nodejs.org/docs/latest/api/http2.html#http2streampushstreamheaders-options-callback
 foreign import pushStream :: Http2Stream -> Headers -> OptionsObject -> (Error -> Http2Stream -> Headers -> Effect Unit) -> Effect Unit
