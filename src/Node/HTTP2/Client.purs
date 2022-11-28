@@ -94,7 +94,7 @@ foreign import destroy :: ClientHttp2Stream -> Effect Unit
 
 -- | https://nodejs.org/docs/latest/api/http2.html#http2sessionclosecallback
 close :: ClientHttp2Session -> Effect Unit -> Effect Unit
-close = unsafeCoerce Internal.close
+close = unsafeCoerce Internal.closeServer
 
 -- | https://nodejs.org/docs/latest/api/http2.html#event-response
 -- |

@@ -2,17 +2,11 @@ import http2 from "http2";
 
 export const createServer = options => () => {
   const server = http2.createServer(options);
-  // TODO instead of an error callback
-  // TODO the completion callback should be Maybe Error -> Effect Unit
-  // server.on("error", error => errorcallback(error)());
-  // server.on("sessionError", (error,session) => errorcallback(error)());
   return server;
 };
 
 export const createSecureServer = options => () => {
   const server = http2.createSecureServer(options);
-  // server.on("error", error => errorcallback(error)());
-  // server.on("sessionError", (error,session) => errorcallback(error)());
   return server;
 };
 
@@ -23,7 +17,9 @@ export const listen = server => options => callback => () => {
 };
 
 export const onceSession = http2server => callback => () => {
-  http2server.once("session", (session) => callback(session)());
+  const cb = session => callback(session)();
+  http2server.once("session", cb);
+  return () => http2server.removeEventListener("session", cb);
 };
 
 // https://nodejs.org/docs/latest/api/http2.html#http2streampushstreamheaders-options-callback

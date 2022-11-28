@@ -162,16 +162,18 @@ module Node.HTTP2
   , OptionsObject(..)
   , toOptions
   , Flags
+  , SettingsObject(..)
+  , enablePush
   ) where
 
 import Prelude
 
 import Control.Monad.Except (runExcept)
-import Data.Either (hush)
+import Data.Either (fromRight, hush)
 import Data.Maybe (Maybe, fromJust)
 import Data.Newtype (class Newtype)
 import Data.Traversable (traverse)
-import Foreign (Foreign, readArray, readInt, readString, unsafeToForeign)
+import Foreign (Foreign, readArray, readBoolean, readInt, readString, unsafeToForeign)
 import Foreign.Index (readProp)
 import Foreign.Keys (keys)
 import Foreign.Object (union)
@@ -308,3 +310,14 @@ instance Monoid OptionsObject where
 -- | ```
 toOptions :: forall r. Record r -> OptionsObject
 toOptions = OptionsObject <<< unsafeToForeign
+
+-- | An HTTP/2 “Settings object.”
+-- |
+-- | https://nodejs.org/api/http2.html#settings-object
+newtype SettingsObject = SettingsObject Foreign
+
+-- | > Specifies `true` if HTTP/2 Push Streams are to be permitted
+-- | > on the `Http2Session` instances.
+enablePush :: SettingsObject -> Boolean
+enablePush (SettingsObject obj) = fromRight false $ runExcept do
+  readBoolean =<< readProp "enablePush" obj

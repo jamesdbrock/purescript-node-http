@@ -51,14 +51,17 @@ module Node.HTTP2.Server
   , onceCloseServerSecure
   , ServerHttp2Session
   , respond
+  , localSettings
   , closeSession
   , ServerHttp2Stream
+  , session
   , pushStream
   , additionalHeaders
   , onceWantTrailers
   , sendTrailers
   , onceEnd
   , toDuplex
+  , closeStream
   ) where
 
 import Prelude
@@ -66,7 +69,8 @@ import Prelude
 import Data.Nullable (Nullable)
 import Effect (Effect)
 import Effect.Exception (Error)
-import Node.HTTP2 (Flags, HeadersObject, OptionsObject)
+import Node.HTTP2 (Flags, HeadersObject, OptionsObject, SettingsObject)
+import Node.HTTP2.Constants as Constants
 import Node.HTTP2.Internal as Internal
 import Node.Stream (Duplex)
 import Unsafe.Coerce (unsafeCoerce)
@@ -84,7 +88,7 @@ foreign import listen :: Http2Server -> OptionsObject -> Effect Unit -> Effect U
 
 -- | https://nodejs.org/docs/latest/api/http2.html#serverclosecallback
 closeServer :: Http2Server -> Effect Unit -> Effect Unit
-closeServer = unsafeCoerce Internal.close
+closeServer = unsafeCoerce Internal.closeServer
 
 -- | https://nodejs.org/docs/latest/api/net.html#event-close
 -- |
@@ -111,7 +115,7 @@ listenSecure = unsafeCoerce listen
 
 -- | https://nodejs.org/docs/latest/api/http2.html#serverclosecallback
 closeServerSecure :: Http2SecureServer -> Effect Unit -> Effect Unit
-closeServerSecure = unsafeCoerce Internal.close
+closeServerSecure = unsafeCoerce Internal.closeServer
 
 -- | https://nodejs.org/docs/latest/api/net.html#event-close
 -- |
@@ -149,6 +153,9 @@ onErrorServerSecure = unsafeCoerce Internal.onEmitterError
 -- | > taken through interactions with either the `Http2Server` or `Http2Stream` objects.
 foreign import data ServerHttp2Session :: Type
 
+session :: ServerHttp2Stream -> ServerHttp2Session
+session = unsafeCoerce Internal.session
+
 -- | https://nodejs.org/docs/latest/api/http2.html#event-session
 -- |
 -- | Listen for one event, call the callback, then remove
@@ -156,11 +163,15 @@ foreign import data ServerHttp2Session :: Type
 -- |
 -- | Returns an effect for removing the event listener before the event
 -- | is raised.
-foreign import onceSession :: Http2Server -> (ServerHttp2Session -> Effect Unit) -> Effect Unit
+foreign import onceSession :: Http2Server -> (ServerHttp2Session -> Effect Unit) -> Effect (Effect Unit)
+
+-- | https://nodejs.org/api/http2.html#http2sessionlocalsettings
+localSettings :: ServerHttp2Session -> SettingsObject
+localSettings = unsafeCoerce Internal.localSettings
 
 -- | https://nodejs.org/docs/latest/api/http2.html#http2sessionclosecallback
 closeSession :: ServerHttp2Session -> Effect Unit -> Effect Unit
-closeSession = unsafeCoerce Internal.close
+closeSession = unsafeCoerce Internal.closeSession
 
 -- | Listen for one event, call the callback, then remove
 -- | the event listener.
@@ -248,6 +259,10 @@ sendTrailers = unsafeCoerce Internal.sendTrailers
 -- | is raised.
 onceEnd :: ServerHttp2Stream -> Effect Unit -> Effect (Effect Unit)
 onceEnd = unsafeCoerce Internal.onceEnd
+
+-- | https://nodejs.org/docs/latest/api/http2.html#http2streamclosecode-callback
+closeStream :: ServerHttp2Stream -> Effect Unit -> Effect Unit
+closeStream stream = Internal.closeStream (unsafeCoerce stream) Constants.ngHTTP2_NO_ERROR
 
 -- | Coerce to a duplex stream.
 toDuplex :: ServerHttp2Stream -> Duplex

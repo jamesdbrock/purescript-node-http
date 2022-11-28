@@ -5,7 +5,7 @@ import Prelude
 import Control.Alternative ((<|>))
 import Control.Parallel (parSequence_)
 import Data.Either (either)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (Maybe(..), fromJust, fromMaybe)
 import Data.String as String
 import Data.Tuple (Tuple(..), fst)
 import Effect.Aff (Aff, attempt, catchError, parallel, sequential, throwError)
@@ -16,6 +16,7 @@ import Node.HTTP2.Client.Aff as Client.Aff
 import Node.HTTP2.Server.Aff as Server.Aff
 import Node.Stream.Aff (end, fromStringUTF8, readAll, toStringUTF8, write)
 import Node.URL as URL
+import Partial.Unsafe (unsafePartial)
 import Test.MockCert (cert, key)
 import Unsafe.Coerce (unsafeCoerce)
 
@@ -34,7 +35,7 @@ push1_serverSecure = do
       (toOptions { key: key, cert: cert })
     void $ Server.Aff.listenSecure server
       (toOptions { port: 8444 })
-      \_headers stream -> do
+      \_session _headers stream -> do
 
         -- 2. Wait to receive a request.
         let s = Server.Aff.toDuplex stream
@@ -50,10 +51,12 @@ push1_serverSecure = do
         Server.Aff.respond stream2 (toOptions {}) (toHeaders {})
         let s2 = Server.Aff.toDuplex stream2
         write s2 =<< fromStringUTF8 "HTTP/2 secure push body Aff"
-        end s2
+        -- end s2
+        Server.Aff.endRespond stream2 Nothing
 
         -- 5. Close the connection.
-        end s
+        -- end s
+        Server.Aff.endRespond stream Nothing
 
         -- 6. After one session, stop the server.
         Server.Aff.closeSecure server
@@ -106,7 +109,7 @@ headers_serverSecure = do
     (toOptions { key: key, cert: cert })
   Server.Aff.listenSecure server
     (toOptions { port: 8444 })
-    \headers stream -> do
+    \_session headers stream -> do
       liftEffect $ Console.log $ "SERVER " <> headersShow headers
 
       -- 2. Receive a request.
@@ -129,10 +132,12 @@ headers_serverSecure = do
             }
         )
       let s2 = Server.Aff.toDuplex stream2
-      end s2
+      -- end s2
+      Server.Aff.endRespond stream2 Nothing
 
       -- 5. Close the connection.
-      end s
+      -- end s
+      Server.Aff.endRespond stream Nothing
 
       -- 6. After one session, stop the server.
       Server.Aff.closeSecure server
@@ -165,7 +170,7 @@ headers_client = do
     ]
 
   -- 5. Wait for the stream to end, then close the connection.
-  Client.Aff.waitEnd stream
+  _ <- Client.Aff.waitEnd stream
   Client.Aff.close session
 
 trailers_serverSecure :: Aff Unit
@@ -176,20 +181,23 @@ trailers_serverSecure = do
     (toOptions { key: key, cert: cert })
   Server.Aff.listenSecure server
     (toOptions { port: 8444 })
-    \_ stream -> do
+    \_session _headers stream -> do
 
       -- 2. Receive a request.
-      let s = Server.Aff.toDuplex stream
+      -- let s = Server.Aff.toDuplex stream
 
       -- 3. Send a response
       -- This whole Trailers API is so bad, how can we improve this.
       Server.Aff.respond stream
-        (toOptions { waitForTrailers: true })
+        -- (toOptions { waitForTrailers: true })
+        (toOptions {})
         (toHeaders {})
-      end s
+      -- end s
       -- 4. Send Trailers.
-      Server.Aff.waitWantTrailers stream
-      Server.Aff.sendTrailers stream (toHeaders { "trailer1": "trailer one" })
+      -- Server.Aff.waitWantTrailers stream
+      -- Server.Aff.sendTrailers stream (toHeaders { "trailer1": "trailer one" })
+      Server.Aff.endRespond stream (Just $ toHeaders { "trailer1": "trailer one" })
+
 
       -- 5. After one session, stop the server.
       Server.Aff.closeSecure server
@@ -210,12 +218,12 @@ trailers_client = do
   -- 3. Wait for the response.
   headers <- Client.Aff.waitResponse stream
   liftEffect $ Console.log $ "CLIENT Header " <> headersShow headers
+
   -- 4. Wait for trailers.
-  trailers <- Client.Aff.waitTrailers stream
+  trailers <- unsafePartial $ fromJust <$> Client.Aff.waitEnd stream
   liftEffect $ Console.log $ "CLIENT Trailer " <> headersShow trailers
 
   -- 5. Wait for the stream to end, then close the connection.
-  Client.Aff.waitEnd stream
   Client.Aff.close session
 
 headersShow :: HeadersObject -> String
@@ -247,7 +255,7 @@ error2_serverSecure = catchError
       (toOptions { key: key, cert: cert })
     void $ Server.Aff.listenSecure server
       (toOptions { port: 1 })
-      \_ _ -> pure unit
+      \_session _headers _stream -> pure unit
   ( \e -> do
       liftEffect $ Console.error (unsafeCoerce e)
       throwError e

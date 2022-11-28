@@ -1,11 +1,20 @@
 
+export const localSettings = http2session => {
+  return http2session.localSettings;
+}
+
 // https://nodejs.org/docs/latest/api/http2.html#http2streamrespondheaders-options
 export const respond = http2stream => headers => options => () => {
   http2stream.respond(headers,options);
 };
 
-export const close = foreign => callback => () => {
-  foreign.close(() => callback());
+export const closeSession = http2session => callback => () => {
+  http2session.close(() => callback());
+};
+
+// https://nodejs.org/docs/latest/api/http2.html#serverclosecallback
+export const closeServer = http2server => callback => () => {
+  http2close.close(() => callback());
 };
 
 // https://nodejs.org/docs/latest/api/http2.html#event-close_1
@@ -87,4 +96,13 @@ export const onceEnd = netsocket => callback => () => {
   const cb = () => callback();
   netsocket.once("end", cb);
   return () => {netsocket.removeListener("end", cb);};
+};
+
+export const session = http2stream => {
+  return http2stream.session;
+};
+
+// https://nodejs.org/docs/latest/api/http2.html#http2streamclosecode-callback
+export const closeStream = http2stream => code => callback => () => {
+  http2stream.close(code, () => callback());
 };

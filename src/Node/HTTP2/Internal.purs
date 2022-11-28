@@ -9,7 +9,7 @@ import Effect (Effect)
 import Effect.Exception (Error)
 import Foreign (Foreign)
 import Node.Buffer (Buffer)
-import Node.HTTP2 (Flags, HeadersObject, OptionsObject)
+import Node.HTTP2 (Flags, HeadersObject, OptionsObject, SettingsObject)
 import Node.HTTP2.Constants (NGHTTP2)
 
 -- | Private type which can be coerced into `ClientHttp2Session`
@@ -21,6 +21,9 @@ import Node.HTTP2.Constants (NGHTTP2)
 -- | > `net.Socket` or `tls.TLSSocket` when it is created. When either
 -- | > the `Socket` or the `Http2Session` are destroyed, both will be destroyed.
 foreign import data Http2Session :: Type
+
+-- | https://nodejs.org/api/http2.html#http2sessionlocalsettings
+foreign import localSettings :: Http2Session -> SettingsObject
 
 -- | Listen for one event, call the callback, then remove
 -- | the event listener.
@@ -52,7 +55,10 @@ foreign import onceEmitterError :: Foreign -> (Error -> Effect Unit) -> Effect (
 foreign import onEmitterError :: Foreign -> (Error -> Effect Unit) -> Effect (Effect Unit)
 
 -- | https://nodejs.org/docs/latest/api/http2.html#http2sessionclosecallback
-foreign import close :: Foreign -> Effect Unit -> Effect Unit
+foreign import closeSession :: Http2Session -> Effect Unit -> Effect Unit
+
+-- | https://nodejs.org/docs/latest/api/http2.html#serverclosecallback
+foreign import closeServer :: Foreign -> Effect Unit -> Effect Unit
 
 -- | https://nodejs.org/docs/latest/api/net.html#event-close
 -- |
@@ -98,3 +104,9 @@ foreign import onData :: Http2Stream -> (Buffer -> Effect Unit) -> Effect (Effec
 
 -- | https://nodejs.org/docs/latest/api/net.html#event-end
 foreign import onceEnd :: Http2Stream -> Effect Unit -> Effect (Effect Unit)
+
+-- | https://nodejs.org/api/http2.html#http2streamsession
+foreign import session :: Http2Stream -> Http2Session
+
+-- | https://nodejs.org/docs/latest/api/http2.html#http2streamclosecode-callback
+foreign import closeStream :: Http2Stream -> Int -> Effect Unit -> Effect Unit

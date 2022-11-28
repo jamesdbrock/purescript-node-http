@@ -31,11 +31,10 @@ module Node.HTTP2.Server.Aff
   , createSecureServer
   , listenSecure
   , respond
+  , endRespond
   , pushStream
   , sendHeadersAdditional
   , waitEnd
-  , waitWantTrailers
-  , sendTrailers
   , close
   , closeSecure
   , module ReServer
@@ -43,6 +42,7 @@ module Node.HTTP2.Server.Aff
 
 import Prelude
 
+import Control.Parallel (parSequence_)
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
 import Data.Nullable (toMaybe)
@@ -50,9 +50,10 @@ import Effect.Aff (Aff, effectCanceler, launchAff_, makeAff, nonCanceler)
 import Effect.Class (liftEffect)
 import Effect.Exception (catchException)
 import Node.HTTP2 (HeadersObject, OptionsObject, toOptions)
-import Node.HTTP2.Server (Http2SecureServer, Http2Server, ServerHttp2Stream, toDuplex)
+import Node.HTTP2.Server (Http2SecureServer, Http2Server, ServerHttp2Session, ServerHttp2Stream, toDuplex)
 import Node.HTTP2.Server (Http2Server, Http2SecureServer, ServerHttp2Stream, toDuplex) as ReServer
 import Node.HTTP2.Server as Server
+import Node.Stream.Aff (end)
 import Node.Stream.Aff.Internal as Node.Stream.Aff.Internal
 import Web.Fetch.AbortController as Web.Fetch.AbortController
 
@@ -73,7 +74,7 @@ createServer options = makeAff \complete -> do
 -- |
 -- | For each new client connection and request, the handler function will
 -- | be invoked by `launchAff` and passed the request.
--- | This unfortunately makes the handler function uncancellable.
+-- | This makes the handler function uncancellable.
 -- |
 -- | Will complete after the socket has stopped listening and closed.
 -- |
@@ -87,7 +88,7 @@ createServer options = makeAff \complete -> do
 listen
   :: Http2Server
   -> OptionsObject
-  -> (HeadersObject -> ServerHttp2Stream -> Aff Unit)
+  -> (ServerHttp2Session -> HeadersObject -> ServerHttp2Stream -> Aff Unit)
   -> Aff Unit
 listen server options handler = makeAff \complete -> do
   -- The Http2Server is a tls.Server
@@ -99,13 +100,14 @@ listen server options handler = makeAff \complete -> do
   let abortsignal = Web.Fetch.AbortController.signal abortcontroller
 
   onStreamCancel <- Server.onStream server \stream headers _ -> do
-    launchAff_ $ handler headers stream
+    launchAff_ $ handler (Server.session stream) headers stream
 
   -- https://nodejs.org/docs/latest/api/net.html#event-error
   -- “the 'close' event will not be emitted directly following this event unless server.close() is manually called.”
   onErrorCancel <- Server.onErrorServer server \err -> do
     onStreamCancel
-    -- TODO Is it a good idea to closeServer here?
+    -- Is it a good idea to closeServer here?
+    -- Yes because the socket must be closed when listening completes.
     Server.closeServer server $ pure unit
     complete (Left err)
 
@@ -147,7 +149,7 @@ createSecureServer options = makeAff \complete -> do
 -- |
 -- | For each new client connection and request, the handler function will
 -- | be invoked by `launchAff` and passed the request.
--- | This unfortunately makes the handler function uncancellable.
+-- | This makes the handler function uncancellable.
 -- |
 -- | Will complete after the socket has stopped listening and closed.
 -- |
@@ -161,7 +163,7 @@ createSecureServer options = makeAff \complete -> do
 listenSecure
   :: Http2SecureServer
   -> OptionsObject
-  -> (HeadersObject -> ServerHttp2Stream -> Aff Unit)
+  -> (ServerHttp2Session -> HeadersObject -> ServerHttp2Stream -> Aff Unit)
   -> Aff Unit
 listenSecure server options handler = makeAff \complete -> do
   -- The Http2Server is a tls.Server
@@ -173,13 +175,14 @@ listenSecure server options handler = makeAff \complete -> do
   let abortsignal = Web.Fetch.AbortController.signal abortcontroller
 
   onStreamCancel <- Server.onStreamSecure server \stream headers _ -> do
-    launchAff_ $ handler headers stream
+    launchAff_ $ handler (Server.session stream) headers stream
 
   -- https://nodejs.org/docs/latest/api/net.html#event-error
   -- “the 'close' event will not be emitted directly following this event unless server.close() is manually called.”
   onErrorCancel <- Server.onErrorServerSecure server \err -> do
     onStreamCancel
-    -- TODO Is it a good idea to closeServer here?
+    -- Is it a good idea to closeServer here?
+    -- Yes because the socket must be closed when listening completes.
     Server.closeServerSecure server $ pure unit
     complete (Left err)
 
@@ -187,10 +190,6 @@ listenSecure server options handler = makeAff \complete -> do
     onStreamCancel
     onErrorCancel
     complete (Right unit)
-
-  -- TODO there is also an on 'session' event raised by the server, do we
-  -- want to do anything about that?
-  -- https://nodejs.org/docs/latest/api/http2.html#class-serverhttp2session
 
   Server.listenSecure server (toOptions { "signal": abortsignal } <> options) do
     -- We don't want to complete here.
@@ -205,18 +204,76 @@ listenSecure server options handler = makeAff \complete -> do
 -- |
 -- | Follow this with calls to
 -- | [`Node.Stream.Aff.write`](https://pursuit.purescript.org/packages/purescript-node-streams-aff/docs/Node.Stream.Aff#v:write)
--- | and
--- | [`Node.Stream.Aff.end`](https://pursuit.purescript.org/packages/purescript-node-streams-aff/docs/Node.Stream.Aff#v:end).
+-- | and `endRespond`.
 -- |
 -- | See
 -- | [`http2stream.respond([headers[, options]])`](https://nodejs.org/docs/latest/api/http2.html#http2streamrespondheaders-options)
 respond :: ServerHttp2Stream -> OptionsObject -> HeadersObject -> Aff Unit
 respond stream options headers = makeAff \complete -> do
   catchException (complete <<< Left) do
-    Server.respond stream headers options
+    Server.respond stream headers (toOptions { waitForTrailers: true } <> options)
     -- TODO wait for respond send?
     complete (Right unit)
   pure nonCanceler
+-- respond :: ServerHttp2Stream -> OptionsObject -> HeadersObject -> Aff Unit
+-- respond stream options headers = makeAff \complete -> do
+--   catchException (complete <<< Left) do
+--     Server.respond stream headers options
+--     -- TODO wait for respond send?
+--     complete (Right unit)
+--   pure nonCanceler
+
+endRespond :: ServerHttp2Stream -> Maybe HeadersObject -> Aff Unit
+endRespond stream trailersMaybe = do
+    parSequence_
+      [ do
+          waitWantTrailers stream
+          case trailersMaybe of
+            Just trailers -> do
+              sendTrailers stream trailers
+            Nothing -> do
+              closeStream stream
+      , end (toDuplex stream)
+      ]
+  where
+
+  closeStream :: ServerHttp2Stream -> Aff Unit
+  closeStream stream' = makeAff \complete -> do
+    catchException (complete <<< Left) do
+      Server.closeStream stream' $ complete (Right unit)
+    pure nonCanceler
+
+  -- | Wait for the
+  -- | [`wantTrailers`](https://nodejs.org/docs/latest/api/http2.html#event-wanttrailers)
+  -- | event.
+  -- |
+  -- | > When initiating a `request` or `response`, the `waitForTrailers` option must
+  -- | > be set for this event to be emitted.
+  -- |
+  -- | Follow this with a call to `sendTrailers`.
+  waitWantTrailers :: ServerHttp2Stream -> Aff Unit
+  waitWantTrailers stream' = makeAff \complete -> do
+    onceWantTrailersCancel <- Server.onceWantTrailers stream' $ complete (Right unit)
+    pure $ effectCanceler do
+      onceWantTrailersCancel
+
+  -- | Send a trailing `HEADERS` frame to the connected HTTP/2 peer.
+  -- | This will cause the `Http2Stream` to immediately close and must
+  -- | only be called after the final `DATA` frame is signalled with
+  -- | [`Node.Stream.Aff.end`](https://pursuit.purescript.org/packages/purescript-node-streams-aff/docs/Node.Stream.Aff#v:end).
+  -- |
+  -- | See [`http2stream.sendTrailers(headers)`](https://nodejs.org/docs/latest/api/http2.html#http2streamsendtrailersheaders)
+  -- |
+  -- | > When sending a request or sending a response, the
+  -- | > `options.waitForTrailers` option must be set in order to keep
+  -- | > the `Http2Stream` open after the final `DATA` frame so that
+  -- | > trailers can be sent.
+  sendTrailers :: ServerHttp2Stream -> HeadersObject -> Aff Unit
+  sendTrailers stream' headers = makeAff \complete -> do
+    catchException (complete <<< Left) do
+      Server.sendTrailers stream' headers
+      complete (Right unit)
+    pure nonCanceler
 
 -- | Close the server listening socket. Will complete after socket is closed.
 close :: Http2Server -> Aff Unit
@@ -269,35 +326,3 @@ waitEnd stream = makeAff \complete -> do
   else do
     complete (Right unit)
     pure nonCanceler
-
--- | Wait for the
--- | [`wantTrailers`](https://nodejs.org/docs/latest/api/http2.html#event-wanttrailers)
--- | event.
--- |
--- | > When initiating a `request` or `response`, the `waitForTrailers` option must
--- | > be set for this event to be emitted.
--- |
--- | Follow this with a call to `sendTrailers`.
-waitWantTrailers :: ServerHttp2Stream -> Aff Unit
-waitWantTrailers stream = makeAff \complete -> do
-  onceWantTrailersCancel <- Server.onceWantTrailers stream $ complete (Right unit)
-  pure $ effectCanceler do
-    onceWantTrailersCancel
-
--- | Send a trailing `HEADERS` frame to the connected HTTP/2 peer.
--- | This will cause the `Http2Stream` to immediately close and must
--- | only be called after the final `DATA` frame is signalled with
--- | [`Node.Stream.Aff.end`](https://pursuit.purescript.org/packages/purescript-node-streams-aff/docs/Node.Stream.Aff#v:end).
--- |
--- | See [`http2stream.sendTrailers(headers)`](https://nodejs.org/docs/latest/api/http2.html#http2streamsendtrailersheaders)
--- |
--- | > When sending a request or sending a response, the
--- | > `options.waitForTrailers` option must be set in order to keep
--- | > the `Http2Stream` open after the final `DATA` frame so that
--- | > trailers can be sent.
-sendTrailers :: ServerHttp2Stream -> HeadersObject -> Aff Unit
-sendTrailers stream headers = makeAff \complete -> do
-  catchException (complete <<< Left) do
-    Server.sendTrailers stream headers
-    complete (Right unit)
-  pure nonCanceler

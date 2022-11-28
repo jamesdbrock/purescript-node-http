@@ -35,7 +35,6 @@ module Node.HTTP2.Client.Aff
   , waitResponse
   , waitPush
   , waitHeadersAdditional
-  , waitTrailers
   , waitEnd
   , close
   , module ReClient
@@ -43,7 +42,10 @@ module Node.HTTP2.Client.Aff
 
 import Prelude
 
+import Control.Alt (alt)
+import Control.Parallel (parallel, sequential)
 import Data.Either (Either(..))
+import Data.Maybe (Maybe(..))
 import Effect.Aff (Aff, effectCanceler, makeAff, nonCanceler)
 import Effect.Exception (catchException)
 import Node.HTTP2 (HeadersObject, OptionsObject, toOptions)
@@ -163,30 +165,50 @@ waitHeadersAdditional stream = makeAff \complete -> do
     onceErrorStreamCancel
     onceHeadersCancel
 
--- | Wait to receive a block of headers associated with trailing header fields.
--- |
--- | See
--- | [Event: `'trailers'`](https://nodejs.org/docs/latest/api/http2.html#event-trailers)
-waitTrailers :: ClientHttp2Stream -> Aff HeadersObject
-waitTrailers stream = makeAff \complete -> do
-  onceErrorStreamCancel <- Client.onceErrorStream stream (complete <<< Left)
-  onceTrailersCancel <- Client.onceTrailers stream \headers _flags -> do
-    onceErrorStreamCancel
-    complete (Right headers)
-  pure $ effectCanceler do
-    onceErrorStreamCancel
-    onceTrailersCancel
+-- | Wait for the end of the `Readable` response stream from the server.
+-- | Maybe return
+-- | trailing header fields (“trailers”) if found at the end of the stream.
+waitEnd :: ClientHttp2Stream -> Aff (Maybe HeadersObject)
+waitEnd stream = do
+  result :: Either HeadersObject Unit <- sequential $
+    alt
+      do
+        parallel do
+          Left <$> waitTrailers stream
+      do
+        parallel do
+          Right <$> waitEnd' stream
+  case result of
+    Left trailers -> do
+      waitEnd' stream
+      pure (Just trailers)
+    Right _ -> pure Nothing
+  where
 
--- | Wait for the end of the `Readable` stream from the server.
-waitEnd :: ClientHttp2Stream -> Aff Unit
-waitEnd stream = makeAff \complete -> do
-  readable <- Node.Stream.Aff.Internal.readable (toDuplex stream)
-  if readable then do
-    onceErrorStreamCancel <- Client.onceErrorStream stream (complete <<< Left)
-    onceEndCancel <- Client.onceEnd stream $ complete (Right unit)
+  -- | Wait to receive a block of headers associated with trailing header fields.
+  -- |
+  -- | See
+  -- | [Event: `'trailers'`](https://nodejs.org/docs/latest/api/http2.html#event-trailers)
+  waitTrailers :: ClientHttp2Stream -> Aff HeadersObject
+  waitTrailers stream' = makeAff \complete -> do
+    onceErrorStreamCancel <- Client.onceErrorStream stream' (complete <<< Left)
+    onceTrailersCancel <- Client.onceTrailers stream' \headers _flags -> do
+      onceErrorStreamCancel
+      complete (Right headers)
     pure $ effectCanceler do
       onceErrorStreamCancel
-      onceEndCancel
-  else do
-    complete (Right unit)
-    pure nonCanceler
+      onceTrailersCancel
+
+  -- | Wait for the end of the `Readable` stream from the server.
+  waitEnd' :: ClientHttp2Stream -> Aff Unit
+  waitEnd' stream' = makeAff \complete -> do
+    readable <- Node.Stream.Aff.Internal.readable (toDuplex stream')
+    if readable then do
+      onceErrorStreamCancel <- Client.onceErrorStream stream' (complete <<< Left)
+      onceEndCancel <- Client.onceEnd stream' $ complete (Right unit)
+      pure $ effectCanceler do
+        onceErrorStreamCancel
+        onceEndCancel
+    else do
+      complete (Right unit)
+      pure nonCanceler
